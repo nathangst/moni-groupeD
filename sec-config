@@ -1,0 +1,103 @@
+# Config custom de SEC
+
+
+# Sniffeur - Promiscuous Detection
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(\w+):\s*, (.*promiscuous.*)
+desc=Détection du mode promiscuous
+action=write /home/loghost/sec/log/promiscuous.log $3, $4 - $5, $6 ; pipe '$3, $4 - $5, $6' /usr/local/bin/send_discord.sh; pipe '$3, $4 - $5, $6' /usr/local/bin/rsyslog_wall.sh
+
+
+# Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(\w+):\s*(.*)
+# pipe '$0' /usr/local/bin/send_discord.sh
+
+
+
+# Passer Inapercu - Changement de date de création
+#
+# Regex pour comparer à une date antérieur à 2010 (2009 -> 1)
+# (200[0-9]|19\d{2}|[1-9]\d{0,2})
+# 
+type=Single
+ptype=RegExp
+pattern=^Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(\S+),\s*(\d+):\s*(.*?):(.*?)\s*(Image:\s*.*?)\s*(TargetFilename:\s*.*?)\s*(CreationUtcTime:\s.*?)\s(PreviousCreationUtcTime: .*?)\s(User:)\s*(.*?)\\(.+)$
+desc=Détection de modification de la date de création d'un fichier
+action=write /home/loghost/sec/log/date_change.log $3 - $4 - $7 - $10 - [$12 / New$11] - By: $14-$15 ; pipe '$3 - $4 - $7 - $10 - [$12 / New$11] - By: $14-$15' /usr/local/bin/send_discord.sh; pipe '$3 - $4 - $7 - $10 - [$12 / New$11] - By: $14-$15' /usr/local/bin/rsyslog_wall.sh
+
+
+#####################
+##       SSH       ##
+#####################
+
+# Tentatives de connexions - SSH
+# Brute-force ?
+type=SingleWithThreshold
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(OpenSSH|sshd\[\d+\]):,(\s\d*:\ssshd:)?\s*(Failed .+ for (\S+) from [\d.]+ port \d+) ssh2
+desc=Three SSH login failures within 1m
+action=write /home/loghost/sec/log/ssh_login.log Multiples connexions SSH échouées: $3 - $4 - $7 ; pipe 'Multiples connexions SSH échouées: $3 - $4 - $7' /usr/local/bin/send_discord.sh; pipe 'Multiples connexions SSH échouées: $3 - $4 - $7' /usr/local/bin/rsyslog_wall.sh ; create SSH_LOGIN_FAILURE_$8
+window=60
+thresh=3
+
+
+# Réussite après erreur
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(OpenSSH|sshd\[\d+\]):,(\s\d*:\ssshd:)?\s*(Accepted .+ for (\S+) from [\d.]+ port \d+) ssh2
+context=SSH_LOGIN_FAILURE_$8
+desc=Successful SSH login after failed attempts
+action=write /home/loghost/sec/log/ssh_login.log Une connexion a réussi après plusieurs échecs: $3 - $4 - $7 ; pipe 'Une connexion a réussi après plusieurs échecs: $3 - $4 - $7' /usr/local/bin/rsyslog_wall.sh ; pipe 'Une connexion a réussi après plusieurs échecs: $3 - $4 - $7' /usr/local/bin/send_discord.sh  ; delete SSH_LOGIN_FAILURE_$8
+
+
+# Password dans le username - Mot de passe d'exemple : rootroot
+
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(OpenSSH|sshd\[\d+\]):,(\s\d*:\ssshd:)?\s*(Failed .+ for invalid user |Invalid user )(\S*?)rootroot(\S*?) from ([\d.]+) port (\d+)(\sssh2)?
+desc= Mot de passe dans le username
+action=write /home/loghost/sec/log/ssh_login.log Mot de passe dans le username détecté: $3 - Machine: $4 - Username: $9$10 - Remote: $11:$12 ; pipe 'Mot de passe dans le username détecté: $3 - Machine: $4 - Username: $9$10 - Remote: $11:$12' /usr/local/bin/rsyslog_wall.sh ; pipe 'Mot de passe dans le username détecté: $3 - Machine: $4 - Username: $9$10 - Remote: $11:$12' /usr/local/bin/send_discord.sh 
+
+
+
+
+
+#################################################################################
+## Détection connexion ssh et création d'un SSH_SESSION avec la session client ##
+#################################################################################
+
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),sshd\[\d+\]:, (Accepted .+ for (\S+) from [\d.]+ port \d+) ssh2
+desc= Connexion SSH détectée
+action= create SSH_SESSION_$6
+
+# utilisation de sudo lors d'une session ssh
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(\S+):,\s*(\S*)\s*:\s*TTY=(pts\/\S*)\s*;\s*PWD=(\S*)\s*;\s*USER=(\S*)\s*;\s*COMMAND=(.+)$
+context=SSH_SESSION_$6
+desc= Sudo dans session SSH
+action= write /home/loghost/sec/log/sudo_ssh.log Un user ssh utilise sudo: $3 - $4@$6 - Dir:$8 - CMD:$10 ; pipe 'Un user ssh utilise sudo: $3 - $4@$6 - Dir:$8 - CMD:$10' /usr/local/bin/send_discord.sh; pipe 'Un user ssh utilise sudo: $3 - $4@$6 - Dir:$8 - CMD:$10' /usr/local/bin/rsyslog_wall.sh
+
+
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),sshd\[\d+\]:, (Disconnected from user (\S+) [\d.]+ port \d+)
+desc= Session ssh fermée
+action= delete SSH_SESSION_$6
+
+
+
+
+
+###############################
+##  SUDO avec la faille CVE  ##
+###############################
+
+type=Single
+ptype=RegExp
+pattern=Prio\s*:(\S+)\s*,\s*Facility\s*:(\S+)\s*\|\s*(\w{3}\s+\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2}),(\S+),(\S+):,\s*(\S*)\s*:\s*TTY=(pts\/\S*)\s*;\s*PWD=(\S*)\s*;\s*USER=(#-1)\s*;\s*COMMAND=(.+)$
+desc= Utilisation de la faille Sudo 1.8.28 !!! 
+action= write /home/loghost/sec/log/faille_sudo.log Alerte !!! Utilisation de la faille SUDO !!! $3 - Machine: $4@$6 - PWD=$8 - User=$9 - CMD=$10 ; pipe 'Alerte !!! Utilisation de la faille SUDO !!! $3 - Machine: $4@$6 - PWD=$8 - User=$9 - CMD=$10' /usr/local/bin/rsyslog_wall.sh ; pipe 'Alerte !!! Utilisation de la faille SUDO !!! $3 - Machine: $4@$6 - PWD=$8 - User=$9 - CMD=$10' /usr/local/bin/send_discord.sh
+                                                                                                                                                                                                                  
